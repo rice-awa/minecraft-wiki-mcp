@@ -156,13 +156,15 @@ async def search_wiki(
     """搜索 Minecraft Wiki 内容
     
     Args:
-        query: 搜索关键词
+        query: 搜索关键词(尽量使用中文)
         limit: 结果数量限制，默认使用配置文件设置，最大50
         namespaces: 命名空间，多个用逗号分隔（可选）
         format: 响应格式，默认json
     
     Returns:
-        搜索结果字典，包含匹配页面列表和分页信息
+        搜索结果字典，包含匹配页面列表和分页信息,返回的结果并不是详细信息，请使用该工具后接着使用pageAPI查看详细信息。
+    Notes:
+        此工具只能依照关键词匹配搜索描述，可能无法返回跟关键词完全匹配的内容，注意分辨
     """
     if limit is None:
         limit = DEFAULT_LIMIT
