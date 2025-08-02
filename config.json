@@ -1,6 +1,6 @@
 {
   "wiki_api": {
-    "base_url": "http://localhost:3000",
+    "base_url": "http://mcwiki.rice-awa.top",
     "timeout": 30,
     "max_retries": 3,
     "default_format": "both",
@@ -13,8 +13,7 @@
     "description": "MCP服务器，提供Minecraft Wiki内容访问工具，支持搜索、页面获取和批量处理功能",
     "version": "1.0.0",
     "host": "0.0.0.0",
-    "port": 8000,
-    "transport": "sse"
+    "port": 8000
   },
   "logging": {
     "level": "INFO",

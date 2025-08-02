@@ -465,8 +465,7 @@ if __name__ == "__main__":
     mcp_server.settings.port = server_config.get("port", 8000)
     
     try:
-        transport = server_config.get("transport", "sse")
-        mcp_server.run(transport=transport)
+        mcp_server.run(transport="sse")
     except KeyboardInterrupt:
         logger.info("服务器已停止")
     except Exception as e:
