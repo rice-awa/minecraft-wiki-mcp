@@ -2,11 +2,13 @@ import json
 import asyncio
 import logging
 import os
+import sys
+import argparse
 from typing import List, Dict, Any, Optional
 import aiohttp
 from mcp.server.fastmcp import FastMCP
 
-# Load configuration
+# 加载配置文件
 def load_config():
     """加载配置文件"""
     config_path = os.path.join(os.path.dirname(__file__), 'config.json')
@@ -31,7 +33,7 @@ def load_config():
                 "version": "1.0.0",
                 "host": "0.0.0.0",
                 "port": 8000,
-                "transport": "sse"
+                "transport": "streamable-http"
             },
             "logging": {
                 "level": "INFO",
@@ -42,10 +44,10 @@ def load_config():
         logger.error(f"配置文件格式错误: {e}，使用默认配置")
         return load_config()  # Recursive call to get default config
 
-# Initialize configuration
+# 初始化配置
 config = load_config()
 
-# Setup logging
+# 设置日志
 log_level = getattr(logging, config["logging"]["level"], logging.INFO)
 logging.basicConfig(
     level=log_level,
@@ -53,22 +55,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mc-wiki-mcp-server")
 
-# Configuration constants
+# 配置常量
 WIKI_API_BASE_URL = config["wiki_api"]["base_url"]
 DEFAULT_TIMEOUT = config["wiki_api"]["timeout"]
 MAX_RETRIES = config["wiki_api"]["max_retries"]
-DEFAULT_FORMAT = config["wiki_api"]["default_format"]
+DEFAULT_FORMAT = "wikitext"  # 使用Wikitext格式以节省token
 DEFAULT_LIMIT = config["wiki_api"]["default_limit"]
 MAX_BATCH_SIZE = config["wiki_api"]["max_batch_size"]
 MAX_CONCURRENCY = config["wiki_api"]["max_concurrency"]
 
-# Create FastMCP server with configuration
+# 创建 FastMCP 服务器实例
 mcp_server = FastMCP(
     name=config["mcp_server"]["name"],
     dependencies=["asyncio", "aiohttp", "mcp", "pydantic"]
 )
 
-# HTTP Client for Wiki API
+# Wiki API HTTP 客户端
 class WikiAPIClient:
     def __init__(self, base_url: str = WIKI_API_BASE_URL, timeout: int = DEFAULT_TIMEOUT):
         self.base_url = base_url.rstrip('/')
@@ -84,7 +86,7 @@ class WikiAPIClient:
             await self.session.close()
     
     async def get(self, endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Make GET request to Wiki API"""
+        """向 Wiki API 发送 GET 请求"""
         if not self.session:
             raise RuntimeError("Client not initialized. Use 'async with WikiAPIClient()' pattern.")
         
@@ -112,10 +114,10 @@ class WikiAPIClient:
                     logger.error(f"Failed to connect to Wiki API after {MAX_RETRIES} attempts: {e}")
                     raise
                 logger.warning(f"Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
-                await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
+                await asyncio.sleep(1 * (attempt + 1))  # 指数退避
     
     async def post(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Make POST request to Wiki API"""
+        """向 Wiki API 发送 POST 请求"""
         if not self.session:
             raise RuntimeError("Client not initialized. Use 'async with WikiAPIClient()' pattern.")
         
@@ -143,9 +145,9 @@ class WikiAPIClient:
                     logger.error(f"Failed to connect to Wiki API after {MAX_RETRIES} attempts: {e}")
                     raise
                 logger.warning(f"Request failed (attempt {attempt + 1}/{MAX_RETRIES}): {e}")
-                await asyncio.sleep(1 * (attempt + 1))  # Exponential backoff
+                await asyncio.sleep(1 * (attempt + 1))  # 指数退避
 
-# Wiki MCP Tools
+# Wiki MCP 工具定义
 @mcp_server.tool()
 async def search_wiki(
     query: str,
@@ -154,17 +156,19 @@ async def search_wiki(
     format: str = "json"
 ) -> dict:
     """搜索 Minecraft Wiki 内容
-    
+
     Args:
         query: 搜索关键词(尽量使用中文)
         limit: 结果数量限制，默认使用配置文件设置，最大50
         namespaces: 命名空间，多个用逗号分隔（可选）
         format: 响应格式，默认json
-    
+
     Returns:
         搜索结果字典，包含匹配页面列表和分页信息,返回的结果并不是详细信息，请使用该工具后接着使用pageAPI查看详细信息。
-    Notes:
-        此工具只能依照关键词匹配搜索描述，可能无法返回跟关键词完全匹配的内容，注意分辨
+
+    Tips:
+        - 搜索结果仅包含页面标题和摘要，不包含完整内容
+        - 获取完整页面内容请使用 get_wiki_page 工具
     """
     if limit is None:
         limit = DEFAULT_LIMIT
@@ -208,34 +212,38 @@ async def search_wiki(
 @mcp_server.tool()
 async def get_wiki_page(
     page_name: str,
-    format: str = None,
+    format: str = "wikitext",
     use_cache: bool = True,
     include_metadata: bool = True
 ) -> dict:
     """获取指定页面的完整内容
-    
+
     Args:
         page_name: 页面名称
-        format: 输出格式 - html, markdown, both (默认使用配置文件设置)
+        format: 输出格式 - wikitext (默认，推荐，省token), html, markdown, both
         use_cache: 是否使用缓存 (默认True)
         include_metadata: 是否包含元数据 (默认True)
-    
+
     Returns:
-        页面内容字典，包含HTML/Markdown内容、元数据等
+        页面内容字典，包含Wikitext/HTML/Markdown内容、元数据等
+
+    Tips:
+        - 强烈建议使用 wikitext 格式，可大幅节省token
+        - wikitext 是原始Wiki标记语言，体积最小
+        - 如需转换为其他格式，可在客户端处理
     """
-    if format is None:
-        format = DEFAULT_FORMAT
-    
-    try:
-        params = {
-            "format": format,
-            "useCache": str(use_cache).lower(),
-            "includeMetadata": str(include_metadata).lower()
-        }
-        
-        # URL encode the page name
-        import urllib.parse
-        encoded_page_name = urllib.parse.quote(page_name, safe='')
+            if format is None:
+                format = DEFAULT_FORMAT
+            
+            try:
+                params = {
+                    "format": format,
+                    "useCache": str(use_cache).lower(),
+                    "includeMetadata": str(include_metadata).lower()
+                }
+                
+                # 对页面名称进行 URL 编码
+                import urllib.parse        encoded_page_name = urllib.parse.quote(page_name, safe='')
         
         async with WikiAPIClient() as client:
             result = await client.get(f"/api/page/{encoded_page_name}", params)
@@ -264,20 +272,24 @@ async def get_wiki_page(
 @mcp_server.tool()
 async def get_wiki_pages_batch(
     pages: List[str],
-    format: str = "markdown",
+    format: str = "wikitext",
     concurrency: int = None,
     use_cache: bool = True
 ) -> dict:
     """批量获取多个页面内容
-    
+
     Args:
         pages: 页面名称列表
-        format: 输出格式 - html, markdown, both (默认markdown)
+        format: 输出格式 - wikitext (默认，推荐，省token), html, markdown, both
         concurrency: 并发请求数 (默认使用配置文件设置)
         use_cache: 是否使用缓存 (默认True)
-    
+
     Returns:
         批量获取结果字典，包含成功和失败的页面结果
+
+    Tips:
+        - 强烈建议使用 wikitext 格式批量获取，可大幅节省token
+        - 批量请求支持最多20个页面
     """
     if concurrency is None:
         concurrency = MAX_CONCURRENCY
@@ -333,7 +345,7 @@ async def check_page_exists(page_name: str) -> dict:
         页面存在性检查结果
     """
     try:
-        # URL encode the page name
+        # 对页面名称进行 URL 编码
         import urllib.parse
         encoded_page_name = urllib.parse.quote(page_name, safe='')
         
@@ -365,7 +377,7 @@ async def check_page_exists(page_name: str) -> dict:
             "exists": False
         }
 
-# Wiki MCP Resources
+# Wiki MCP 资源定义
 @mcp_server.resource("minecraft://wiki/page/{page_name}")
 async def get_wiki_page_resource(page_name: str) -> dict:
     """获取Wiki页面资源"""
@@ -428,7 +440,7 @@ async def get_wiki_search_resource(query: str) -> dict:
             }
         }
 
-# Health check tool for Wiki API
+# Wiki API 健康检查工具
 @mcp_server.tool()
 async def check_wiki_api_health() -> dict:
     """检查Wiki API服务健康状态"""
@@ -450,24 +462,143 @@ async def check_wiki_api_health() -> dict:
         }
 
 if __name__ == "__main__":
-    # Run MCP server with configuration
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="Minecraft Wiki MCP Server")
+    parser.add_argument(
+        "--transport", "-t",
+        choices=["stdio", "sse", "streamable-http", "all"],
+        default=None,
+        help="Transport type: stdio, sse, streamable-http, or all (run multiple)"
+    )
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Host for HTTP servers (default: from config)"
+    )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=None,
+        help="Port for HTTP servers (default: from config)"
+    )
+    parser.add_argument(
+        "--sse-port",
+        type=int,
+        default=None,
+        help="Port for SSE server (if running all transports)"
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=None,
+        help="Port for streamable-http server (if running all transports)"
+    )
+    args = parser.parse_args()
+
+    # 运行 MCP 服务器
     logger.info("Starting Minecraft Wiki MCP Server...")
     logger.info(f"Configuration: {config['mcp_server']}")
     logger.info(f"Wiki API Base URL: {WIKI_API_BASE_URL}")
-    
-    # Log copyright notice
+
+    # 记录版权信息
     if "metadata" in config:
         logger.info(f"版权信息: {config['metadata'].get('copyright_notice', 'N/A')}")
-    
-    # Set server configuration from config file
+
+    # 从配置文件获取服务器配置
     server_config = config["mcp_server"]
-    mcp_server.settings.host = server_config.get("host", "0.0.0.0")
-    mcp_server.settings.port = server_config.get("port", 8000)
-    
-    try:
-        mcp_server.run(transport="sse")
-    except KeyboardInterrupt:
-        logger.info("服务器已停止")
-    except Exception as e:
-        logger.error(f"服务器启动失败: {e}")
-        raise 
+    transport = args.transport if args.transport else server_config.get("transport", "streamable-http")
+    host = args.host if args.host else server_config.get("host", "0.0.0.0")
+    port = args.port if args.port else server_config.get("port", 8000)
+    sse_port = args.sse_port if args.sse_port else port
+    http_port = args.http_port if args.http_port else port
+
+    # 判断是否为生产模式
+    is_production = os.environ.get("ENV", "development").lower() == "production"
+
+    # 根据配置或命令行参数选择传输方式
+    # streamable-http: 生产环境推荐（基于HTTP）
+    # stdio: 用于 Claude Desktop 等MCP客户端
+    # sse: Server-Sent Events（已弃用但仍支持）
+    # all: 同时运行三种传输方式
+
+    async def run_transports():
+        """运行选定的传输方式"""
+        tasks = []
+
+        if transport == "all" or transport == "stdio":
+            logger.info("Starting stdio transport (for Claude Desktop)...")
+            # stdio 不支持异步，在线程池中运行
+            tasks.append(asyncio.to_thread(mcp_server.run, transport="stdio"))
+
+        if transport == "all":
+            # 并发运行 SSE 和 streamable-http
+            if sse_port != http_port:
+                tasks.append(asyncio.to_thread(
+                    lambda: mcp_server.run(transport="sse", host=host, port=sse_port)
+                ))
+                tasks.append(asyncio.to_thread(
+                    lambda: mcp_server.run(
+                        transport="streamable-http",
+                        host=host,
+                        port=http_port,
+                        reload=not is_production,
+                        debug=not is_production
+                    )
+                ))
+            else:
+                # 如果端口相同，只运行 streamable-http（不能绑定同一端口）
+                logger.warning("SSE and HTTP ports are the same, running only streamable-http")
+                tasks.append(asyncio.to_thread(
+                    lambda: mcp_server.run(
+                        transport="streamable-http",
+                        host=host,
+                        port=http_port,
+                        reload=not is_production,
+                        debug=not is_production
+                    )
+                ))
+        elif transport == "sse":
+            logger.warning("SSE transport is deprecated. Consider using 'streamable-http' for production.")
+            logger.info(f"Starting SSE server on {host}:{port}...")
+            mcp_server.run(transport="sse", host=host, port=port)
+        elif transport == "streamable-http":
+            logger.info(f"Using streamable-http transport (host={host}, port={port})")
+            mcp_server.run(
+                transport="streamable-http",
+                host=host,
+                port=port,
+                reload=not is_production,
+                debug=not is_production
+            )
+        else:
+            # 默认使用 streamable-http
+            logger.info(f"Using streamable-http transport (host={host}, port={port})")
+            mcp_server.run(
+                transport="streamable-http",
+                host=host,
+                port=port,
+                reload=not is_production,
+                debug=not is_production
+            )
+
+        if tasks:
+            try:
+                await asyncio.gather(*tasks)
+            except KeyboardInterrupt:
+                logger.info("服务器已停止")
+            except Exception as e:
+                logger.error(f"服务器启动失败: {e}")
+                raise
+
+    # 运行传输服务
+    if transport == "stdio":
+        # stdio 必须在阻塞模式下运行
+        try:
+            mcp_server.run(transport="stdio")
+        except KeyboardInterrupt:
+            logger.info("服务器已停止")
+        except Exception as e:
+            logger.error(f"服务器启动失败: {e}")
+            raise
+    else:
+        asyncio.run(run_transports()) 

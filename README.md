@@ -8,11 +8,12 @@
 ### 功能特性
 
 - 🔍 **Wiki 内容搜索**: 支持关键词搜索 Minecraft Wiki 页面
-- 📄 **页面内容获取**: 获取完整的页面内容，支持 HTML 和 Markdown 格式
+- 📄 **页面内容获取**: 获取完整的页面内容，支持 wikitext、HTML 和 Markdown 格式
 - 📚 **批量页面获取**: 高效地批量获取多个页面内容
 - ✅ **页面存在性检查**: 快速检查页面是否存在
 - 🏥 **健康状态监控**: 监控后端 Wiki API 服务状态
-- 🌐 **多种传输方式**: 支持 SSE 和 stdio 两种通信协议
+- 🌐 **多种传输方式**: 支持 streamable-http、SSE 和 stdio 三种通信协议
+- 💡 **Token 优化**: 默认使用 wikitext 格式，大幅节省 token 消耗
 
 ## 项目结构
 
@@ -22,8 +23,8 @@ mc-wiki-mcp/
 ├── mcp_server_stdio.py        # stdio 版本服务器
 ├── config.json               # 配置文件
 ├── requirements.txt          # Python 依赖
-├── docs/                     # 文档目录
-│   ├── API_DOCUMENTATION.md
+├── API_DOCUMENTATION.md      # API 文档
+├── docs/                     # 其他文档目录
 │   ├── USAGE_GUIDE.md
 │   └── PROJECT_COMPLETION_SUMMARY.md
 └── README.md                 # 本文件
@@ -59,7 +60,7 @@ pip install -r requirements.txt
     "base_url": "http://localhost:3000",
     "timeout": 30,
     "max_retries": 3,
-    "default_format": "both",
+    "default_format": "wikitext",
     "default_limit": 10,
     "max_batch_size": 20,
     "max_concurrency": 5
@@ -70,7 +71,7 @@ pip install -r requirements.txt
     "version": "1.0.0",
     "host": "0.0.0.0",
     "port": 8000,
-    "transport": "sse"
+    "transport": "streamable-http"
   },
   "logging": {
     "level": "INFO",
@@ -83,17 +84,37 @@ pip install -r requirements.txt
 
 本项目提供两种通信方式，适用于不同的使用场景：
 
-### 🌐 方式一：SSE (Server-Sent Events) 版本
+### 🌐 方式一：streamable-http 版本
 
-**适用场景**: Web 应用、远程客户端、HTTP API 集成
+**适用场景**: Web 应用、远程客户端、HTTP API 集成（生产环境推荐）
 
 #### 启动服务器
 
 ```bash
+# 使用默认配置启动（streamable-http）
 python mcp_server_sse.py
+
+# 指定传输方式
+python mcp_server_sse.py --transport streamable-http
+
+# 使用 SSE 方式（已弃用）
+python mcp_server_sse.py --transport sse
+
+# 同时运行多种传输方式
+python mcp_server_sse.py --transport all --port 8000 --sse-port 8001
 ```
 
-服务器将在 `http://localhost:8000` 启动，支持 SSE 连接。
+服务器将在 `http://localhost:8000` 启动，支持 streamable-http 连接。
+
+#### 命令行参数
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `--transport, -t` | 传输方式：stdio, sse, streamable-http, all | `-t streamable-http` |
+| `--host` | 服务器主机地址 | `--host 0.0.0.0` |
+| `--port, -p` | 服务器端口 | `-p 8000` |
+| `--sse-port` | SSE 服务器端口（运行 all 时使用） | `--sse-port 8001` |
+| `--http-port` | HTTP 服务器端口（运行 all 时使用） | `--http-port 8000` |
 
 #### 客户端配置示例
 
@@ -117,14 +138,18 @@ eventSource.onmessage = function(event) {
 };
 ```
 
-#### SSE 版本特点
+#### streamable-http 版本特点
 
 - ✅ 支持远程访问
 - ✅ 适合 Web 应用集成
 - ✅ 支持多个并发客户端
 - ✅ 可通过 HTTP 代理访问
+- ✅ 生产环境推荐使用
+- ✅ 支持命令行参数灵活配置
 - ❌ 需要网络端口
 - ❌ 需要额外的网络配置
+
+> **注意**: SSE 传输方式已弃用，建议使用 streamable-http 替代。
 
 ---
 
@@ -221,7 +246,7 @@ async def connect_to_stdio_server():
 批量获取"钻石"、"红石"、"附魔"三个页面的内容
 ```
 
-#### 通过 API 使用 (SSE 版本)
+#### 通过 API 使用 (streamable-http 版本)
 
 ```bash
 # 搜索内容
@@ -229,11 +254,20 @@ curl -X POST http://localhost:8000/tool/search_wiki \
   -H "Content-Type: application/json" \
   -d '{"query": "红石", "limit": 5}'
 
-# 获取页面
+# 获取页面（推荐使用 wikitext 格式节省 token）
 curl -X POST http://localhost:8000/tool/get_wiki_page \
   -H "Content-Type: application/json" \
-  -d '{"page_name": "钻石", "format": "markdown"}'
+  -d '{"page_name": "钻石", "format": "wikitext"}'
 ```
+
+### 格式说明
+
+| 格式 | 说明 | 推荐场景 |
+|------|------|----------|
+| `wikitext` | 原始 Wiki 标记语言，体积最小 | **推荐**，节省 token |
+| `html` | HTML 格式 | 需要 HTML 渲染 |
+| `markdown` | Markdown 格式 | 需要 Markdown 渲染 |
+| `both` | 同时返回多种格式 | 需要灵活选择格式 |
 
 ## 🔧 高级配置
 
@@ -244,7 +278,7 @@ curl -X POST http://localhost:8000/tool/get_wiki_page \
 | `wiki_api.base_url` | Wiki API 地址 | `http://localhost:3000` | 任何有效 URL |
 | `wiki_api.timeout` | 请求超时时间 | `30` | 秒数 |
 | `wiki_api.max_retries` | 最大重试次数 | `3` | 正整数 |
-| `wiki_api.default_format` | 默认输出格式 | `both` | `html`, `markdown`, `both` |
+| `wiki_api.default_format` | 默认输出格式 | `wikitext` | `wikitext`, `html`, `markdown`, `both` |
 | `mcp_server.host` | 服务器主机 (仅 SSE) | `0.0.0.0` | IP 地址 |
 | `mcp_server.port` | 服务器端口 (仅 SSE) | `8000` | 端口号 |
 
@@ -327,7 +361,7 @@ tail -f debug.log
 
 ## 📖 相关文档
 
-- [API 文档](docs/API_DOCUMENTATION.md) - 详细的 API 接口说明
+- [API 文档](API_DOCUMENTATION.md) - 详细的 API 接口说明
 - [使用指南](docs/USAGE_GUIDE.md) - 深入的使用教程
 - [项目完成总结](docs/PROJECT_COMPLETION_SUMMARY.md) - 项目开发总结
 
@@ -351,5 +385,5 @@ tail -f debug.log
 ---
 
 **快速开始提示**: 
-- 🌐 想要远程访问或集成到 Web 应用？选择 **SSE 版本**
+- 🌐 想要远程访问或集成到 Web 应用？选择 **streamable-http 版本**（生产环境推荐）
 - 💻 想要在 Claude Desktop 中使用？选择 **stdio 版本**
